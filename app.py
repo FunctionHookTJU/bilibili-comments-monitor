@@ -8,7 +8,15 @@ import json
 import time
 import urllib.request
 import os
+import csv
+import threading
+from datetime import datetime, timezone, timedelta
 from http.server import HTTPServer
+
+# GMT+8 时区
+CST = timezone(timedelta(hours=8))
+LOG_FILE = os.path.join(os.path.dirname(__file__), "comment_log.csv")
+LOG_INTERVAL_MINUTES = {0, 20, 40}  # 每小时的第 0、20、40 分钟记录
 
 VIDEOS = [
     "BV1fy4y1L7Rq",
@@ -23,6 +31,84 @@ HEADERS = {
     ),
     "Referer": "https://www.bilibili.com/",
 }
+
+
+def now_cst() -> datetime:
+    return datetime.now(CST)
+
+
+def write_log(rows: list[dict]):
+    """将一组记录追加写入 CSV 日志"""
+    file_exists = os.path.isfile(LOG_FILE)
+    with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["time_cst", "bvid", "title", "reply"])
+        if not file_exists:
+            writer.writeheader()
+        writer.writerows(rows)
+
+
+def read_log() -> list[dict]:
+    """读取全部日志记录"""
+    if not os.path.isfile(LOG_FILE):
+        return []
+    with open(LOG_FILE, "r", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def calc_avg_speed(bvid: str) -> str:
+    """从日志计算该视频的平均评论增长速度（条/分钟）"""
+    records = [r for r in read_log() if r["bvid"] == bvid]
+    if len(records) < 2:
+        return "数据不足"
+    first, last = records[0], records[-1]
+    try:
+        t0 = datetime.fromisoformat(first["time_cst"])
+        t1 = datetime.fromisoformat(last["time_cst"])
+        r0, r1 = int(first["reply"]), int(last["reply"])
+        dt_min = (t1 - t0).total_seconds() / 60
+        if dt_min <= 0:
+            return "数据不足"
+        speed = (r1 - r0) / dt_min
+        return f"{speed:.2f} 条/分钟（{speed * 60:.0f} 条/小时）"
+    except Exception:
+        return "计算失败"
+
+
+def logger_thread():
+    """后台线程：在每整 20 分钟时抓取并记录评论数"""
+    logged_key = None  # 防止同一分钟重复记录
+    while True:
+        t = now_cst()
+        key = (t.hour, t.minute)
+        if t.minute in LOG_INTERVAL_MINUTES and key != logged_key:
+            logged_key = key
+            import threading as _t
+            results = [None] * len(VIDEOS)
+
+            def _worker(i, bvid):
+                results[i] = fetch_video(bvid)
+
+            threads = [_t.Thread(target=_worker, args=(i, bv)) for i, bv in enumerate(VIDEOS)]
+            for th in threads: th.start()
+            for th in threads: th.join()
+
+            rows = []
+            for r in results:
+                if r and not r.get("error"):
+                    rows.append({
+                        "time_cst": now_cst().strftime("%Y-%m-%d %H:%M:%S"),
+                        "bvid":     r["bvid"],
+                        "title":    r.get("title", ""),
+                        "reply":    r["reply"],
+                    })
+            if rows:
+                write_log(rows)
+                ts = now_cst().strftime("%H:%M:%S")
+                print(f"\n[{ts} CST] 评论日志已记录")
+                for row in rows:
+                    avg = calc_avg_speed(row["bvid"])
+                    print(f"  {row['bvid']}  reply={row['reply']:,}  均速={avg}")
+        time.sleep(30)  # 每 30 秒检查一次，避免 CPU 空转
 
 
 def fetch_video(bvid: str) -> dict:
@@ -109,9 +195,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
 if __name__ == "__main__":
     PORT = 5000
     server = HTTPServer(("localhost", PORT), Handler)
+
+    # 启动日志后台线程
+    t = threading.Thread(target=logger_thread, daemon=True)
+    t.start()
+
     print(f"服务器已启动: http://localhost:{PORT}")
     for bv in VIDEOS:
         print(f"  监控: https://www.bilibili.com/video/{bv}/")
+    print(f"  日志文件: {LOG_FILE}")
+    print(f"  每整 20 分钟（:00 / :20 / :40 CST）自动记录评论数")
     print("按 Ctrl+C 停止\n")
     try:
         server.serve_forever()
