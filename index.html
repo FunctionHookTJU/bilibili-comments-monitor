@@ -75,8 +75,8 @@
     .dps-num { font-size: 20px; font-weight: 800; color: #18a057; line-height: 1; }
     .dps-desc { font-size: 10px; color: #00000045; margin-top: 5px; letter-spacing: 1px; }
     footer { margin-top: 20px; width: 100%; max-width: 880px; }
-    .progress-bar { height: 2px; background: #0000000e; border-radius: 2px; overflow: hidden; margin-bottom: 10px; }
-    .progress-fill { height: 100%; background: linear-gradient(90deg, #fb7299, #23ade5); border-radius: 2px; transition: width 1s linear; }
+    .progress-bar { height: 6px; background: #ffffff; border: 1px solid #333333; border-radius: 4px; overflow: hidden; margin-bottom: 10px; }
+    .progress-fill { height: 100%; background: #333333; border-radius: 4px; transition: width 1s linear; }
     .status-bar { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #00000050; }
     .dot { width: 6px; height: 6px; border-radius: 50%; background: #4caf50; flex-shrink: 0; animation: pulse 1.5s ease-in-out infinite; }
     .dot.loading { background: #ff9800; animation: none; }
@@ -237,7 +237,9 @@
       document.getElementById(`dpm-${bvid}`).textContent = dps === null ? "--" : (dps * 60).toFixed(1);
       document.getElementById(`dph-${bvid}`).textContent = dps === null ? "--" : Math.round(dps * 3600).toLocaleString("zh-CN");
 
+      // ETA（仅第一视频）
       if (bvid === TARGET_BV) {
+        // 799w 目标
         const pct = Math.min(100, (data.reply / TARGET_NUM) * 100);
         document.getElementById(`eta-pct-${bvid}`).textContent = pct.toFixed(3) + "%";
         document.getElementById(`eta-fill-${bvid}`).style.width = pct + "%";
@@ -257,6 +259,7 @@
         } else {
           timeEl.textContent = `还差 ${remaining.toLocaleString("zh-CN")} 条 · 等待速率数据...`;
         }
+        // 400w 目标
         const pct2 = Math.min(100, (data.reply / TARGET_NUM_2) * 100);
         document.getElementById(`eta-pct2-${bvid}`).textContent = pct2.toFixed(3) + "%";
         document.getElementById(`eta-fill2-${bvid}`).style.width = pct2 + "%";
