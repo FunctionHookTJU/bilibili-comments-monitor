@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>B站评论监控</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      background: #9b9d9e;
+      font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #1a1a1a;
+      padding: 24px;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 32px;
+      font-size: 12px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: #1a1a1a;
+    }
+    header svg { width: 15px; height: 15px; fill: #fb7299; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      width: 100%;
+      max-width: 880px;
+    }
+    .card {
+      background: #ffffff;
+      border: 1px solid #fbd0dd;
+      border-top: 3px solid #fb7299;
+      border-radius: 20px;
+      padding: 28px 26px 22px;
+      box-shadow: 0 4px 16px rgba(251,114,153,0.10);
+    }
+    .card-bvid { font-size: 10px; color: #1a1a1a; letter-spacing: 2px; margin-bottom: 6px; }
+    .card-title {
+      font-size: 13px;
+      color: #1a1a1a;
+      line-height: 1.5;
+      min-height: 40px;
+      margin-bottom: 18px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .reply-count {
+      font-size: clamp(48px, 7vw, 76px);
+      font-weight: 900;
+      letter-spacing: -2px;
+      line-height: 1;
+      background: linear-gradient(135deg, #cd76a0, #FB7299);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      transition: transform 0.2s ease;
+    }
+    .reply-count.bump { transform: scale(1.06); }
+    .reply-unit { font-size: 11px; color: #00000045; margin-top: 5px; margin-bottom: 18px; letter-spacing: 1px; }
+    .divider { height: 1px; background: #0000000e; margin-bottom: 16px; }
+    .dps-row { display: flex; }
+    .dps-item { flex: 1; text-align: center; }
+    .dps-item + .dps-item { border-left: 1px solid #0000000e; }
+    .dps-num { font-size: 20px; font-weight: 800; color: #18a057; line-height: 1; }
+    .dps-desc { font-size: 10px; color: #00000045; margin-top: 5px; letter-spacing: 1px; }
+    footer { margin-top: 20px; width: 100%; max-width: 880px; }
+    .progress-bar { height: 2px; background: #0000000e; border-radius: 2px; overflow: hidden; margin-bottom: 10px; }
+    .progress-fill { height: 100%; background: linear-gradient(90deg, #fb7299, #23ade5); border-radius: 2px; transition: width 1s linear; }
+    .status-bar { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #00000050; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: #4caf50; flex-shrink: 0; animation: pulse 1.5s ease-in-out infinite; }
+    .dot.loading { background: #ff9800; animation: none; }
+    .dot.error   { background: #f44336; animation: none; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .error-banner {
+      display: none;
+      margin-top: 14px;
+      padding: 10px 16px;
+      background: #ff000012;
+      border: 1px solid #ff000025;
+      border-radius: 10px;
+      font-size: 12px;
+      color: #ff6b6b;
+      width: 100%;
+      max-width: 880px;
+    }
+    /* 799w 目标区块（仅第一视频） */
+    .eta-block {
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid #0000000e;
+    }
+    .eta-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 8px;
+    }
+    .eta-label { font-size: 10px; color: #b8860b; letter-spacing: 2px; }
+    .eta-pct   { font-size: 18px; font-weight: 800; color: #d4a000; }
+    .eta-track {
+      height: 4px;
+      background: #0000000f;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    .eta-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #f5c400, #d4870a);
+      border-radius: 4px;
+      transition: width 0.6s ease;
+    }
+    .eta-time  { font-size: 11px; color: #c98f00; line-height: 1.6; }
+    /* 400w 目标区块 */
+    .eta-block-2 {
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid #0000000e;
+    }
+    .eta-label-2 { font-size: 10px; color: #23ade566; letter-spacing: 2px; }
+    .eta-pct-2   { font-size: 18px; font-weight: 800; color: #23ade5; }
+    .eta-track-2 {
+      height: 4px;
+      background: #0000000f;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    .eta-fill-2 {
+      height: 100%;
+      background: linear-gradient(90deg, #23ade5, #43e97b);
+      border-radius: 4px;
+      transition: width 0.6s ease;
+    }
+    .eta-time-2 { font-size: 11px; color: #23ade588; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <header>
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path d="M17.813 4.653h.854c1.51.054 2.769.578 3.773 1.574 1.004.995 1.524 2.249 1.56 3.76v7.36c-.036 1.51-.556 2.769-1.56 3.773s-2.262 1.524-3.773 1.56H5.333c-1.51-.036-2.769-.556-3.773-1.56S.036 18.858 0 17.347v-7.36c.036-1.511.556-2.765 1.56-3.76 1.004-.996 2.262-1.52 3.773-1.574h.774l-1.174-1.12a1.234 1.234 0 0 1-.373-.906c0-.356.124-.658.373-.907l.027-.02a1.167 1.167 0 0 1 .906-.4c.356 0 .658.124.907.373L7.066 3.12c.267.249.382.531.382.907 0 .373-.115.654-.382.906L7.04 4.95h9.92l-.027-.018a1.237 1.237 0 0 1-.382-.906c0-.373.116-.658.382-.907l1.293-1.12c.25-.249.552-.373.907-.373.356 0 .658.133.906.4l.027.016c.25.25.374.552.374.907 0 .356-.125.658-.374.907l-1.253 1.197zm-12.48 3.44c-.462.054-.853.244-1.173.569-.32.32-.507.711-.56 1.173v7.36c.053.462.24.858.56 1.173.32.32.711.507 1.173.56h13.334c.462-.053.858-.24 1.173-.56.32-.315.507-.711.56-1.173v-7.36c-.053-.462-.24-.853-.56-1.173-.315-.325-.711-.515-1.173-.569H5.333z"/>
+    </svg>
+    B站评论实时监控
+  </header>
+  <div class="grid" id="grid"></div>
+  <div class="error-banner" id="errorBanner"></div>
+  <footer>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:100%"></div></div>
+    <div class="status-bar"><div class="dot" id="statusDot"></div><span id="statusText">连接中...</span></div>
+  </footer>
+  <script>
+    const REFRESH_INTERVAL = 5;
+    const HISTORY_MAX = 60;
+    const TARGET_BV  = "BV1fy4y1L7Rq";  // 仅此视频显示 799w / 400w 目标
+    const TARGET_NUM  = 7990000;
+    const TARGET_NUM_2 = 4000000;
+    const state = {};
+    let progressTimer = null, lastUpdate = null, initialized = false;
+    const gridEl = document.getElementById("grid");
+    const dotEl = document.getElementById("statusDot");
+    const statusEl = document.getElementById("statusText");
+    const progressEl = document.getElementById("progressFill");
+    const errorEl = document.getElementById("errorBanner");
+
+    function initCards(bvids) {
+      gridEl.innerHTML = "";
+      bvids.forEach(bvid => {
+        state[bvid] = { history: [], lastReply: null };
+        const c = document.createElement("div");
+        c.className = "card";
+        c.innerHTML = `
+          <div class="card-bvid">${bvid}</div>
+          <div class="card-title" id="title-${bvid}">载入中...</div>
+          <div class="reply-count" id="reply-${bvid}">--</div>
+          <div class="reply-unit">条评论</div>
+          <div class="divider"></div>
+          <div class="dps-row">
+            <div class="dps-item"><div class="dps-num" id="dps-${bvid}">--</div><div class="dps-desc">条 / 秒</div></div>
+            <div class="dps-item"><div class="dps-num" id="dpm-${bvid}">--</div><div class="dps-desc">条 / 分钟</div></div>
+            <div class="dps-item"><div class="dps-num" id="dph-${bvid}">--</div><div class="dps-desc">条 / 小时</div></div>
+          </div>
+          ${bvid === TARGET_BV ? `
+          <div class="eta-block">
+            <div class="eta-header">
+              <span class="eta-label">🎯 距离 799 万</span>
+              <span class="eta-pct" id="eta-pct-${bvid}">--%</span>
+            </div>
+            <div class="eta-track"><div class="eta-fill" id="eta-fill-${bvid}" style="width:0%"></div></div>
+            <div class="eta-time" id="eta-time-${bvid}">等待数据...</div>
+          </div>
+          <div class="eta-block-2">
+            <div class="eta-header">
+              <span class="eta-label-2">🏁 距离 400 万</span>
+              <span class="eta-pct-2" id="eta-pct2-${bvid}">--%</span>
+            </div>
+            <div class="eta-track-2"><div class="eta-fill-2" id="eta-fill2-${bvid}" style="width:0%"></div></div>
+            <div class="eta-time-2" id="eta-time2-${bvid}">等待数据...</div>
+          </div>` : ""}`;
+        gridEl.appendChild(c);
+      });
+    }
+
+    function calcDPS(history) {
+      if (history.length < 2) return null;
+      const first = history[0], last = history[history.length - 1];
+      const dt = last.timestamp - first.timestamp;
+      return dt > 0 ? (last.reply - first.reply) / dt : null;
+    }
+
+    function updateCard(data) {
+      const { bvid } = data;
+      if (!state[bvid]) return;
+      const s = state[bvid];
+      s.history.push({ reply: data.reply, timestamp: data.timestamp || Date.now() / 1000 });
+      if (s.history.length > HISTORY_MAX) s.history.shift();
+      const replyEl = document.getElementById(`reply-${bvid}`);
+      if (s.lastReply !== null && data.reply !== s.lastReply) {
+        replyEl.classList.add("bump");
+        setTimeout(() => replyEl.classList.remove("bump"), 250);
+      }
+      s.lastReply = data.reply;
+      replyEl.textContent = data.reply.toLocaleString("zh-CN");
+      document.getElementById(`title-${bvid}`).textContent = data.title || bvid;
+      const dps = calcDPS(s.history);
+      document.getElementById(`dps-${bvid}`).textContent = dps === null ? "--" : (dps < 1 ? dps.toFixed(4) : dps.toFixed(2));
+      document.getElementById(`dpm-${bvid}`).textContent = dps === null ? "--" : (dps * 60).toFixed(1);
+      document.getElementById(`dph-${bvid}`).textContent = dps === null ? "--" : Math.round(dps * 3600).toLocaleString("zh-CN");
+
+      if (bvid === TARGET_BV) {
+        const pct = Math.min(100, (data.reply / TARGET_NUM) * 100);
+        document.getElementById(`eta-pct-${bvid}`).textContent = pct.toFixed(3) + "%";
+        document.getElementById(`eta-fill-${bvid}`).style.width = pct + "%";
+        const remaining = TARGET_NUM - data.reply;
+        const timeEl = document.getElementById(`eta-time-${bvid}`);
+        if (remaining <= 0) {
+          timeEl.textContent = "🎉 已突破 799 万！";
+        } else if (dps !== null && dps > 0) {
+          const sec = remaining / dps;
+          const arrive = new Date(Date.now() + sec * 1000);
+          const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600);
+          const m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60);
+          const parts = [];
+          if (d) parts.push(d + "天"); if (h) parts.push(h + "小时");
+          if (m) parts.push(m + "分"); parts.push(s + "秒");
+          timeEl.textContent = `还差 ${remaining.toLocaleString("zh-CN")} 条 · 约 ${parts.join(" ")} · 预计 ${arrive.toLocaleString("zh-CN")}`;
+        } else {
+          timeEl.textContent = `还差 ${remaining.toLocaleString("zh-CN")} 条 · 等待速率数据...`;
+        }
+        const pct2 = Math.min(100, (data.reply / TARGET_NUM_2) * 100);
+        document.getElementById(`eta-pct2-${bvid}`).textContent = pct2.toFixed(3) + "%";
+        document.getElementById(`eta-fill2-${bvid}`).style.width = pct2 + "%";
+        const remaining2 = TARGET_NUM_2 - data.reply;
+        const timeEl2 = document.getElementById(`eta-time2-${bvid}`);
+        if (remaining2 <= 0) {
+          timeEl2.textContent = "🎉 已突破 400 万！";
+        } else if (dps !== null && dps > 0) {
+          const sec2 = remaining2 / dps;
+          const arrive2 = new Date(Date.now() + sec2 * 1000);
+          const d2 = Math.floor(sec2 / 86400), h2 = Math.floor((sec2 % 86400) / 3600);
+          const m2 = Math.floor((sec2 % 3600) / 60), s2 = Math.floor(sec2 % 60);
+          const parts2 = [];
+          if (d2) parts2.push(d2 + "天"); if (h2) parts2.push(h2 + "小时");
+          if (m2) parts2.push(m2 + "分"); parts2.push(s2 + "秒");
+          timeEl2.textContent = `还差 ${remaining2.toLocaleString("zh-CN")} 条 · 约 ${parts2.join(" ")} · 预计 ${arrive2.toLocaleString("zh-CN")}`;
+        } else {
+          timeEl2.textContent = `还差 ${remaining2.toLocaleString("zh-CN")} 条 · 等待速率数据...`;
+        }
+      }
+    }
+
+    function setStatus(type, msg) {
+      dotEl.className = "dot" + (type !== "ok" ? " " + type : "");
+      statusEl.textContent = msg;
+    }
+
+    function startProgress() {
+      clearInterval(progressTimer);
+      let cd = REFRESH_INTERVAL;
+      progressEl.style.transition = "none";
+      progressEl.style.width = "100%";
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        progressEl.style.transition = `width ${REFRESH_INTERVAL}s linear`;
+        progressEl.style.width = "0%";
+      }));
+      progressTimer = setInterval(() => {
+        cd--;
+        statusEl.textContent = `后台保活 · ${cd}s 后刷新 · 更新于 ${lastUpdate}`;
+        if (cd <= 0) clearInterval(progressTimer);
+      }, 1000);
+    }
+
+    async function fetchAll() {
+      setStatus("loading", "刷新中...");
+      try {
+        const list = await fetch("/api/all").then(r => r.json());
+        if (!initialized) {
+          initCards(list.filter(d => !d.error).map(d => d.bvid));
+          initialized = true;
+        }
+        let anyError = false;
+        list.forEach(d => d.error ? (anyError = true) : updateCard(d));
+        errorEl.style.display = anyError ? "block" : "none";
+        if (anyError) errorEl.textContent = "部分视频获取失败，下次刷新重试";
+        lastUpdate = new Date().toLocaleTimeString("zh-CN");
+        setStatus("ok", `后台保活 · ${REFRESH_INTERVAL}s 后刷新 · 更新于 ${lastUpdate}`);
+        startProgress();
+      } catch (e) {
+        setStatus("error", "无法连接服务器，请运行: python app.py");
+        errorEl.style.display = "block";
+        errorEl.textContent = "连接失败: " + e.message;
+      }
+    }
+
+    const worker = new Worker(URL.createObjectURL(new Blob(
+      ["let t=null;self.onmessage=e=>{if(t)clearInterval(t);t=setInterval(()=>self.postMessage(0),e.data);};"],
+      { type: "application/javascript" }
+    )));
+    worker.onmessage = fetchAll;
+    worker.postMessage(REFRESH_INTERVAL * 1000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) fetchAll(); });
+    fetchAll();
+  </script>
+</body>
+</html>
