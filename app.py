@@ -74,6 +74,35 @@ def calc_avg_speed(bvid: str) -> str:
         return "计算失败"
 
 
+def calc_avg_speed_json(bvid: str) -> dict:
+    """返回平均速率的结构化数据，供前端展示"""
+    records = [r for r in read_log() if r["bvid"] == bvid]
+    if len(records) < 2:
+        return {"bvid": bvid, "ok": False, "msg": "日志数据不足（需等待至少两个记录点）"}
+    first, last = records[0], records[-1]
+    try:
+        t0 = datetime.fromisoformat(first["time_cst"])
+        t1 = datetime.fromisoformat(last["time_cst"])
+        r0, r1 = int(first["reply"]), int(last["reply"])
+        dt_min = (t1 - t0).total_seconds() / 60
+        if dt_min <= 0:
+            return {"bvid": bvid, "ok": False, "msg": "时间跨度为零"}
+        speed_min = (r1 - r0) / dt_min
+        return {
+            "bvid":       bvid,
+            "ok":         True,
+            "per_min":    round(speed_min, 4),
+            "per_hour":   round(speed_min * 60, 1),
+            "log_count":  len(records),
+            "first_time": first["time_cst"],
+            "last_time":  last["time_cst"],
+            "delta_reply": r1 - r0,
+            "delta_min":  round(dt_min, 1),
+        }
+    except Exception as e:
+        return {"bvid": bvid, "ok": False, "msg": str(e)}
+
+
 def logger_thread():
     """后台线程：在每整 20 分钟时抓取并记录评论数"""
     logged_key = None  # 防止同一分钟重复记录
@@ -143,11 +172,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/all":
             self._serve_all()
+        elif self.path == "/api/avg_speed":
+            self._serve_avg_speed()
         elif self.path == "/" or self.path == "/index.html":
             self._serve_file("index.html", "text/html; charset=utf-8")
         else:
             self.send_response(404)
             self.end_headers()
+
+    def _serve_avg_speed(self):
+        """返回所有视频的日志均速数据"""
+        result = [calc_avg_speed_json(bvid) for bvid in VIDEOS]
+        body = json.dumps(result, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", len(body))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
+            pass
 
     def _serve_all(self):
         """并行获取所有视频数据"""

@@ -144,6 +144,21 @@
       transition: width 0.6s ease;
     }
     .eta-time-2 { font-size: 11px; color: #23ade588; line-height: 1.6; }
+    /* 日志均速区块 */
+    .avg-block {
+      margin-top: 16px;
+      padding: 10px 14px;
+      background: #f7f5ff;
+      border: 1px solid #e0d9f7;
+      border-radius: 10px;
+    }
+    .avg-label { font-size: 10px; color: #7c5cbf; letter-spacing: 2px; margin-bottom: 6px; }
+    .avg-row { display: flex; gap: 0; }
+    .avg-item { flex: 1; text-align: center; }
+    .avg-item + .avg-item { border-left: 1px solid #e0d9f7; }
+    .avg-num { font-size: 18px; font-weight: 800; color: #7c5cbf; line-height: 1; }
+    .avg-desc { font-size: 10px; color: #00000045; margin-top: 4px; letter-spacing: 1px; }
+    .avg-meta { font-size: 10px; color: #00000035; margin-top: 8px; line-height: 1.6; }
   </style>
 </head>
 <body>
@@ -189,6 +204,14 @@
             <div class="dps-item"><div class="dps-num" id="dps-${bvid}">--</div><div class="dps-desc">条 / 秒</div></div>
             <div class="dps-item"><div class="dps-num" id="dpm-${bvid}">--</div><div class="dps-desc">条 / 分钟</div></div>
             <div class="dps-item"><div class="dps-num" id="dph-${bvid}">--</div><div class="dps-desc">条 / 小时</div></div>
+          </div>
+          <div class="avg-block" id="avg-${bvid}">
+            <div class="avg-label">📊 日志均速</div>
+            <div class="avg-row">
+              <div class="avg-item"><div class="avg-num" id="avg-min-${bvid}">--</div><div class="avg-desc">条 / 分钟</div></div>
+              <div class="avg-item"><div class="avg-num" id="avg-hr-${bvid}">--</div><div class="avg-desc">条 / 小时</div></div>
+            </div>
+            <div class="avg-meta" id="avg-meta-${bvid}">等待日志数据...</div>
           </div>
           ${bvid === TARGET_BV ? `
           <div class="eta-block">
@@ -303,6 +326,27 @@
       }, 1000);
     }
 
+    async function fetchAvgSpeed() {
+      try {
+        const list = await fetch("/api/avg_speed").then(r => r.json());
+        list.forEach(d => {
+          const minEl  = document.getElementById(`avg-min-${d.bvid}`);
+          const hrEl   = document.getElementById(`avg-hr-${d.bvid}`);
+          const metaEl = document.getElementById(`avg-meta-${d.bvid}`);
+          if (!minEl) return;
+          if (!d.ok) {
+            minEl.textContent = "--";
+            hrEl.textContent  = "--";
+            metaEl.textContent = d.msg;
+            return;
+          }
+          minEl.textContent = d.per_min < 1 ? d.per_min.toFixed(4) : d.per_min.toFixed(2);
+          hrEl.textContent  = d.per_hour.toLocaleString("zh-CN");
+          metaEl.textContent = `共 ${d.log_count} 条记录 · 统计 ${d.delta_min} 分钟 · 增长 ${d.delta_reply.toLocaleString("zh-CN")} 条`;
+        });
+      } catch (_) {}
+    }
+
     async function fetchAll() {
       setStatus("loading", "刷新中...");
       try {
@@ -318,6 +362,7 @@
         lastUpdate = new Date().toLocaleTimeString("zh-CN");
         setStatus("ok", `后台保活 · ${REFRESH_INTERVAL}s 后刷新 · 更新于 ${lastUpdate}`);
         startProgress();
+        fetchAvgSpeed();
       } catch (e) {
         setStatus("error", "无法连接服务器，请运行: python app.py");
         errorEl.style.display = "block";
