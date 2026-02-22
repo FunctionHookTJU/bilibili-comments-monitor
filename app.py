@@ -61,7 +61,7 @@ def calc_avg_speed(bvid: str, current_reply: int, current_time: datetime) -> str
     records = [r for r in read_log() if r["bvid"] == bvid]
     if not records:
         return "数据不足"
-    baseline = records[-N_RECENT]  # 取最近 N 条中最早的
+    baseline = records[-min(N_RECENT, len(records))]  # 防止越界
     try:
         t0 = datetime.fromisoformat(baseline["time_cst"])
         r0 = int(baseline["reply"])
@@ -80,7 +80,7 @@ def calc_avg_speed_json(bvid: str, current_reply: int, current_time: datetime) -
     records = [r for r in read_log() if r["bvid"] == bvid]
     if not records:
         return {"bvid": bvid, "ok": False, "msg": "日志数据不足（需等待至少一个日志记录点）"}
-    baseline = records[-N_RECENT]  # 取最近 N 条中最早的一条
+    baseline = records[-min(N_RECENT, len(records))]  # 防止越界
     try:
         t0 = datetime.fromisoformat(baseline["time_cst"])
         r0 = int(baseline["reply"])
