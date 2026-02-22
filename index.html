@@ -342,7 +342,7 @@
           }
           minEl.textContent = d.per_min < 1 ? d.per_min.toFixed(4) : d.per_min.toFixed(2);
           hrEl.textContent  = d.per_hour.toLocaleString("zh-CN");
-          metaEl.textContent = `共 ${d.log_count} 条记录 · 统计 ${d.delta_min} 分钟 · 增长 ${d.delta_reply.toLocaleString("zh-CN")} 条`;
+          metaEl.textContent = `近 ${d.window} 条窗口 · 自 ${d.from_time} · 增长 ${d.delta_reply.toLocaleString("zh-CN")} 条 / ${d.delta_min} 分钟`;
         });
       } catch (_) {}
     }

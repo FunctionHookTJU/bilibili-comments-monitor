@@ -17,6 +17,7 @@ from http.server import HTTPServer
 CST = timezone(timedelta(hours=8))
 LOG_FILE = os.path.join(os.path.dirname(__file__), "comment_log.csv")
 LOG_INTERVAL_MINUTES = {0, 20, 40}  # 每小时的第 0、20、40 分钟记录
+N_RECENT = 3  # 均速窗口：取最近 N 条日志作为起点
 
 VIDEOS = [
     "BV1fy4y1L7Rq",
@@ -55,49 +56,49 @@ def read_log() -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def calc_avg_speed(bvid: str) -> str:
-    """从日志计算该视频的平均评论增长速度（条/分钟）"""
+def calc_avg_speed(bvid: str, current_reply: int, current_time: datetime) -> str:
+    """从最近 N 条日志起点到当前实时评论数，计算均速"""
     records = [r for r in read_log() if r["bvid"] == bvid]
-    if len(records) < 2:
+    if not records:
         return "数据不足"
-    first, last = records[0], records[-1]
+    baseline = records[-N_RECENT]  # 取最近 N 条中最早的
     try:
-        t0 = datetime.fromisoformat(first["time_cst"])
-        t1 = datetime.fromisoformat(last["time_cst"])
-        r0, r1 = int(first["reply"]), int(last["reply"])
-        dt_min = (t1 - t0).total_seconds() / 60
+        t0 = datetime.fromisoformat(baseline["time_cst"])
+        r0 = int(baseline["reply"])
+        dt_min = (current_time - t0).total_seconds() / 60
         if dt_min <= 0:
-            return "数据不足"
-        speed = (r1 - r0) / dt_min
+            return "时间跨度为零"
+        speed = (current_reply - r0) / dt_min
         return f"{speed:.2f} 条/分钟（{speed * 60:.0f} 条/小时）"
     except Exception:
         return "计算失败"
 
 
-def calc_avg_speed_json(bvid: str) -> dict:
-    """返回平均速率的结构化数据，供前端展示"""
+def calc_avg_speed_json(bvid: str, current_reply: int, current_time: datetime) -> dict:
+    """返回平均速率的结构化数据，供前端展示。
+    窗口：最近 N_RECENT 条日志中最早一条 → 当前实时数据"""
     records = [r for r in read_log() if r["bvid"] == bvid]
-    if len(records) < 2:
-        return {"bvid": bvid, "ok": False, "msg": "日志数据不足（需等待至少两个记录点）"}
-    first, last = records[0], records[-1]
+    if not records:
+        return {"bvid": bvid, "ok": False, "msg": "日志数据不足（需等待至少一个日志记录点）"}
+    baseline = records[-N_RECENT]  # 取最近 N 条中最早的一条
     try:
-        t0 = datetime.fromisoformat(first["time_cst"])
-        t1 = datetime.fromisoformat(last["time_cst"])
-        r0, r1 = int(first["reply"]), int(last["reply"])
-        dt_min = (t1 - t0).total_seconds() / 60
+        t0 = datetime.fromisoformat(baseline["time_cst"])
+        r0 = int(baseline["reply"])
+        dt_min = (current_time - t0).total_seconds() / 60
         if dt_min <= 0:
             return {"bvid": bvid, "ok": False, "msg": "时间跨度为零"}
-        speed_min = (r1 - r0) / dt_min
+        speed_min = (current_reply - r0) / dt_min
+        window = min(N_RECENT, len(records))
         return {
-            "bvid":       bvid,
-            "ok":         True,
-            "per_min":    round(speed_min, 4),
-            "per_hour":   round(speed_min * 60, 1),
-            "log_count":  len(records),
-            "first_time": first["time_cst"],
-            "last_time":  last["time_cst"],
-            "delta_reply": r1 - r0,
-            "delta_min":  round(dt_min, 1),
+            "bvid":        bvid,
+            "ok":          True,
+            "per_min":     round(speed_min, 4),
+            "per_hour":    round(speed_min * 60, 1),
+            "log_count":   len(records),
+            "window":      window,
+            "from_time":   baseline["time_cst"],
+            "delta_reply": current_reply - r0,
+            "delta_min":   round(dt_min, 1),
         }
     except Exception as e:
         return {"bvid": bvid, "ok": False, "msg": str(e)}
@@ -135,8 +136,9 @@ def logger_thread():
                 ts = now_cst().strftime("%H:%M:%S")
                 print(f"\n[{ts} CST] 评论日志已记录")
                 for row in rows:
-                    avg = calc_avg_speed(row["bvid"])
-                    print(f"  {row['bvid']}  reply={row['reply']:,}  均速={avg}")
+                    cur_time = now_cst()
+                    avg = calc_avg_speed(row["bvid"], row["reply"], cur_time)
+                    print(f"  {row['bvid']}  reply={row['reply']:,}  近期均速={avg}")
         time.sleep(30)  # 每 30 秒检查一次，避免 CPU 空转
 
 
@@ -181,8 +183,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
 
     def _serve_avg_speed(self):
-        """返回所有视频的日志均速数据"""
-        result = [calc_avg_speed_json(bvid) for bvid in VIDEOS]
+        """实时抓取当前评论数，结合最近 N 条日志计算均速"""
+        import threading as _t
+        live = [None] * len(VIDEOS)
+
+        def _w(i, bvid):
+            live[i] = fetch_video(bvid)
+
+        threads = [_t.Thread(target=_w, args=(i, bv)) for i, bv in enumerate(VIDEOS)]
+        for th in threads: th.start()
+        for th in threads: th.join()
+
+        now = now_cst()
+        result = []
+        for item in live:
+            if item is None or item.get("error"):
+                bvid = item["bvid"] if item else "unknown"
+                result.append({"bvid": bvid, "ok": False, "msg": "实时数据获取失败"})
+            else:
+                result.append(calc_avg_speed_json(item["bvid"], item["reply"], now))
+
         body = json.dumps(result, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
