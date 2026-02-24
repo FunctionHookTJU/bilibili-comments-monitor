@@ -21,7 +21,7 @@ N_RECENT = 3  # 均速窗口：取最近 N 条日志作为起点
 
 VIDEOS = [
     "BV1fy4y1L7Rq",
-    "BV1HfKiz3Ezf",
+    "BV1h1kcBfEuJ",
 ]
 
 HEADERS = {
@@ -259,7 +259,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     PORT = 5000
-    server = HTTPServer(("localhost", PORT), Handler)
+    server = HTTPServer(("0.0.0.0", PORT), Handler)
 
     # 启动日志后台线程
     t = threading.Thread(target=logger_thread, daemon=True)

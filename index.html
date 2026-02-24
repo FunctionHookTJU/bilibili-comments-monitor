@@ -21,7 +21,7 @@
       content: "";
       position: fixed;
       inset: 0;
-      background-image: url("https://q2.itc.cn/q_70/images03/20240608/536bf33e83774b75938e00257971578d.jpeg");
+      background-image: url("https://pic.rmb.bdstatic.com/bjh/news/a1e6b082bd17d2414d4df6486493d7c4.jpeg");
       background-size: cover;
       background-position: center;
       background-repeat: no-repeat;
@@ -59,6 +59,17 @@
       box-shadow: 0 8px 32px rgba(251,114,153,0.18), 0 1.5px 0 rgba(255,255,255,0.5) inset;
     }
     .card-bvid { font-size: 10px; color: #1a1a1a; letter-spacing: 2px; margin-bottom: 6px; }
+    .card-mode-badge {
+      display: inline-block;
+      font-size: 10px;
+      letter-spacing: 1.5px;
+      color: #1976d2;
+      background: rgba(25, 118, 210, 0.10);
+      border: 1px solid rgba(25, 118, 210, 0.25);
+      border-radius: 6px;
+      padding: 2px 8px;
+      margin-bottom: 14px;
+    }
     .card-title {
       font-size: 13px;
       color: #1a1a1a;
@@ -176,6 +187,29 @@
     .avg-num { font-size: 18px; font-weight: 800; color: #7c5cbf; line-height: 1; }
     .avg-desc { font-size: 10px; color: #00000045; margin-top: 4px; letter-spacing: 1px; }
     .avg-meta { font-size: 10px; color: #00000035; margin-top: 8px; line-height: 1.6; }
+    /* VIEW_BV 播放量目标区块 */
+    .eta-block-view {
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid #0000000e;
+    }
+    .eta-label-view { font-size: 10px; color: #1565c0; letter-spacing: 2px; }
+    .eta-pct-view   { font-size: 18px; font-weight: 800; color: #1976d2; }
+    .eta-track-view {
+      height: 4px;
+      background: #0000000f;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 10px;
+      margin-top: 8px;
+    }
+    .eta-fill-view {
+      height: 100%;
+      background: linear-gradient(90deg, #42a5f5, #1565c0);
+      border-radius: 4px;
+      transition: width 0.6s ease;
+    }
+    .eta-time-view { font-size: 11px; color: #1976d2bb; line-height: 1.6; }
   </style>
 </head>
 <body>
@@ -197,6 +231,8 @@
     const TARGET_BV  = "BV1fy4y1L7Rq";  // 仅此视频显示 799w / 400w 目标
     const TARGET_NUM  = 7990000;
     const TARGET_NUM_2 = 4000000;
+    const VIEW_BV = "BV1h1kcBfEuJ";  // 此视频只显示播放量增长，不显示评论/均速/标题
+    const VIEW_TARGET = 27110000;       // 2711 万播放量目标
     const state = {};
     let progressTimer = null, lastUpdate = null, initialized = false;
     const gridEl = document.getElementById("grid");
@@ -211,17 +247,20 @@
         state[bvid] = { history: [], lastReply: null };
         const c = document.createElement("div");
         c.className = "card";
+        const isViewCard = bvid === VIEW_BV;
+        const unit = isViewCard ? "次" : "条";
         c.innerHTML = `
           <div class="card-bvid">${bvid}</div>
-          <div class="card-title" id="title-${bvid}">载入中...</div>
+          ${isViewCard ? `<div class="card-mode-badge">📺 播放量监控</div>` : `<div class="card-title" id="title-${bvid}">载入中...</div>`}
           <div class="reply-count" id="reply-${bvid}">--</div>
-          <div class="reply-unit">条评论</div>
+          <div class="reply-unit">${isViewCard ? "次播放" : "条评论"}</div>
           <div class="divider"></div>
           <div class="dps-row">
-            <div class="dps-item"><div class="dps-num" id="dps-${bvid}">--</div><div class="dps-desc">条 / 秒</div></div>
-            <div class="dps-item"><div class="dps-num" id="dpm-${bvid}">--</div><div class="dps-desc">条 / 分钟</div></div>
-            <div class="dps-item"><div class="dps-num" id="dph-${bvid}">--</div><div class="dps-desc">条 / 小时</div></div>
+            <div class="dps-item"><div class="dps-num" id="dps-${bvid}">--</div><div class="dps-desc">${unit} / 秒</div></div>
+            <div class="dps-item"><div class="dps-num" id="dpm-${bvid}">--</div><div class="dps-desc">${unit} / 分钟</div></div>
+            <div class="dps-item"><div class="dps-num" id="dph-${bvid}">--</div><div class="dps-desc">${unit} / 小时</div></div>
           </div>
+          ${isViewCard ? `` : `
           <div class="avg-block" id="avg-${bvid}">
             <div class="avg-label">📊 日志均速</div>
             <div class="avg-row">
@@ -229,7 +268,16 @@
               <div class="avg-item"><div class="avg-num" id="avg-hr-${bvid}">--</div><div class="avg-desc">条 / 小时</div></div>
             </div>
             <div class="avg-meta" id="avg-meta-${bvid}">等待日志数据...</div>
-          </div>
+          </div>`}
+          ${isViewCard ? `
+          <div class="eta-block-view">
+            <div class="eta-header">
+              <span class="eta-label-view">🎯 距离 2711 万播放</span>
+              <span class="eta-pct-view" id="eta-pct-view-${bvid}">--%</span>
+            </div>
+            <div class="eta-track-view"><div class="eta-fill-view" id="eta-fill-view-${bvid}" style="width:0%"></div></div>
+            <div class="eta-time-view" id="eta-time-view-${bvid}">等待数据...</div>
+          </div>` : ""}
           ${bvid === TARGET_BV ? `
           <div class="eta-block">
             <div class="eta-header">
@@ -246,7 +294,7 @@
             </div>
             <div class="eta-track-2"><div class="eta-fill-2" id="eta-fill2-${bvid}" style="width:0%"></div></div>
             <div class="eta-time-2" id="eta-time2-${bvid}">等待数据...</div>
-          </div>` : ""}`;
+          </div>` : ""}`;  
         gridEl.appendChild(c);
       });
     }
@@ -262,20 +310,45 @@
       const { bvid } = data;
       if (!state[bvid]) return;
       const s = state[bvid];
-      s.history.push({ reply: data.reply, timestamp: data.timestamp || Date.now() / 1000 });
+      const isViewCard = bvid === VIEW_BV;
+      const metricVal = isViewCard ? (data.view ?? data.reply ?? 0) : data.reply;
+      s.history.push({ reply: metricVal, timestamp: data.timestamp || Date.now() / 1000 });
       if (s.history.length > HISTORY_MAX) s.history.shift();
       const replyEl = document.getElementById(`reply-${bvid}`);
-      if (s.lastReply !== null && data.reply !== s.lastReply) {
+      if (s.lastReply !== null && metricVal !== s.lastReply) {
         replyEl.classList.add("bump");
         setTimeout(() => replyEl.classList.remove("bump"), 250);
       }
-      s.lastReply = data.reply;
-      replyEl.textContent = data.reply.toLocaleString("zh-CN");
-      document.getElementById(`title-${bvid}`).textContent = data.title || bvid;
+      s.lastReply = metricVal;
+      replyEl.textContent = metricVal.toLocaleString("zh-CN");
+      if (!isViewCard) document.getElementById(`title-${bvid}`).textContent = data.title || bvid;
       const dps = calcDPS(s.history);
       document.getElementById(`dps-${bvid}`).textContent = dps === null ? "--" : (dps < 1 ? dps.toFixed(4) : dps.toFixed(2));
       document.getElementById(`dpm-${bvid}`).textContent = dps === null ? "--" : (dps * 60).toFixed(1);
       document.getElementById(`dph-${bvid}`).textContent = dps === null ? "--" : Math.round(dps * 3600).toLocaleString("zh-CN");
+
+      // ETA（VIEW_BV 播放量目标）
+      if (isViewCard) {
+        const vPct = Math.min(100, (metricVal / VIEW_TARGET) * 100);
+        document.getElementById(`eta-pct-view-${bvid}`).textContent = vPct.toFixed(3) + "%";
+        document.getElementById(`eta-fill-view-${bvid}`).style.width = vPct + "%";
+        const vRemain = VIEW_TARGET - metricVal;
+        const vTimeEl = document.getElementById(`eta-time-view-${bvid}`);
+        if (vRemain <= 0) {
+          vTimeEl.textContent = "🎉 已突破 2711 万播放！";
+        } else if (dps !== null && dps > 0) {
+          const vSec = vRemain / dps;
+          const vArrive = new Date(Date.now() + vSec * 1000);
+          const vD = Math.floor(vSec / 86400), vH = Math.floor((vSec % 86400) / 3600);
+          const vM = Math.floor((vSec % 3600) / 60), vS = Math.floor(vSec % 60);
+          const vParts = [];
+          if (vD) vParts.push(vD + "天"); if (vH) vParts.push(vH + "小时");
+          if (vM) vParts.push(vM + "分"); vParts.push(vS + "秒");
+          vTimeEl.textContent = `还差 ${vRemain.toLocaleString("zh-CN")} 次 · 约 ${vParts.join(" ")} · 预计 ${vArrive.toLocaleString("zh-CN")}`;
+        } else {
+          vTimeEl.textContent = `还差 ${vRemain.toLocaleString("zh-CN")} 次 · 等待速率数据...`;
+        }
+      }
 
       // ETA（仅第一视频）
       if (bvid === TARGET_BV) {
