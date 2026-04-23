@@ -21,7 +21,6 @@ N_RECENT = 3  # 均速窗口：取最近 N 条日志作为起点
 
 VIDEOS = [
     "BV1fy4y1L7Rq",
-    "BV1h1kcBfEuJ",
 ]
 
 HEADERS = {
