@@ -20,7 +20,10 @@ N_RECENT = 3
 
 VIDEOS = [
     "BV1fy4y1L7Rq",
+    "BV1MPdBB8EEN",
 ]
+
+VIEW_BVS = {"BV1MPdBB8EEN"}
 
 HEADERS = {
     "User-Agent": (
@@ -39,7 +42,7 @@ def now_cst() -> datetime:
 def write_log(rows: list[dict]):
     file_exists = os.path.isfile(LOG_FILE)
     with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["time_cst", "bvid", "title", "reply"])
+        writer = csv.DictWriter(f, fieldnames=["time_cst", "bvid", "title", "reply", "view"])
         if not file_exists:
             writer.writeheader()
         writer.writerows(rows)
@@ -90,18 +93,18 @@ def fetch_videos_parallel() -> list[dict]:
     return results
 
 
-def calc_avg_speed_json(bvid: str, current_reply: int, current_time: datetime) -> dict:
+def calc_avg_speed_json(bvid: str, current_val: int, current_time: datetime, field: str = "reply") -> dict:
     records = [r for r in read_log() if r["bvid"] == bvid]
     if not records:
         return {"bvid": bvid, "ok": False, "msg": "日志数据不足（需等待至少一个日志记录点）"}
     baseline = records[-min(N_RECENT, len(records))]
     try:
         t0 = datetime.fromisoformat(baseline["time_cst"]).replace(tzinfo=CST)
-        r0 = int(baseline["reply"])
+        r0 = int(baseline.get(field) or 0)
         dt_min = (current_time - t0).total_seconds() / 60
         if dt_min <= 0:
             return {"bvid": bvid, "ok": False, "msg": "时间跨度为零"}
-        speed_min = (current_reply - r0) / dt_min
+        speed_min = (current_val - r0) / dt_min
         window = min(N_RECENT, len(records))
         return {
             "bvid":        bvid,
@@ -111,7 +114,7 @@ def calc_avg_speed_json(bvid: str, current_reply: int, current_time: datetime) -
             "log_count":   len(records),
             "window":      window,
             "from_time":   baseline["time_cst"],
-            "delta_reply": current_reply - r0,
+            "delta_reply": current_val - r0,
             "delta_min":   round(dt_min, 1),
         }
     except Exception as e:
@@ -135,6 +138,7 @@ def logger_thread():
                             "bvid":     r["bvid"],
                             "title":    r.get("title", ""),
                             "reply":    r["reply"],
+                            "view":     r.get("view", 0),
                         })
                 if rows:
                     write_log(rows)
@@ -142,12 +146,16 @@ def logger_thread():
                     print(f"\n[{ts} CST] 评论日志已记录")
                     now = now_cst()
                     for row in rows:
-                        avg = calc_avg_speed_json(row["bvid"], row["reply"], now)
+                        is_view = row["bvid"] in VIEW_BVS
+                        field = "view" if is_view else "reply"
+                        val = row[field]
+                        avg = calc_avg_speed_json(row["bvid"], val, now, field)
+                        unit = "次" if is_view else "条"
                         if avg.get("ok"):
-                            print(f"  {row['bvid']}  reply={row['reply']:,}  "
-                                  f"近期均速={avg['per_min']:.2f} 条/分钟（{avg['per_hour']:.0f} 条/小时）")
+                            print(f"  {row['bvid']}  {field}={val:,}  "
+                                  f"近期均速={avg['per_min']:.2f} {unit}/分钟（{avg['per_hour']:.0f} {unit}/小时）")
                         else:
-                            print(f"  {row['bvid']}  reply={row['reply']:,}  近期均速={avg.get('msg', '未知')}")
+                            print(f"  {row['bvid']}  {field}={val:,}  近期均速={avg.get('msg', '未知')}")
         except Exception as e:
             print(f"[logger] 异常: {e}")
         time.sleep(30)
@@ -190,7 +198,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 bvid = item["bvid"] if item else "unknown"
                 result.append({"bvid": bvid, "ok": False, "msg": "实时数据获取失败"})
             else:
-                result.append(calc_avg_speed_json(item["bvid"], item["reply"], now))
+                is_view = item["bvid"] in VIEW_BVS
+                field = "view" if is_view else "reply"
+                result.append(calc_avg_speed_json(item["bvid"], item[field], now, field))
         _send_json(self, result)
 
     def _serve_file(self, filename, content_type):
