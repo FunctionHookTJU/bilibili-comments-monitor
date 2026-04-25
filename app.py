@@ -1,5 +1,5 @@
 """
-Bilibili 双视频评论监控后端
+Bilibili 评论监控后端
 访问 http://localhost:5000 查看前端页面
 """
 
@@ -11,13 +11,12 @@ import os
 import csv
 import threading
 from datetime import datetime, timezone, timedelta
-from http.server import HTTPServer
+from http.server import ThreadingHTTPServer
 
-# GMT+8 时区
 CST = timezone(timedelta(hours=8))
 LOG_FILE = os.path.join(os.path.dirname(__file__), "comment_log.csv")
-LOG_INTERVAL_MINUTES = {0, 20, 40}  # 每小时的第 0、20、40 分钟记录
-N_RECENT = 3  # 均速窗口：取最近 N 条日志作为起点
+LOG_INTERVAL_MINUTES = {0, 20, 40}
+N_RECENT = 3
 
 VIDEOS = [
     "BV1fy4y1L7Rq",
@@ -38,7 +37,6 @@ def now_cst() -> datetime:
 
 
 def write_log(rows: list[dict]):
-    """将一组记录追加写入 CSV 日志"""
     file_exists = os.path.isfile(LOG_FILE)
     with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["time_cst", "bvid", "title", "reply"])
@@ -48,38 +46,55 @@ def write_log(rows: list[dict]):
 
 
 def read_log() -> list[dict]:
-    """读取全部日志记录"""
     if not os.path.isfile(LOG_FILE):
         return []
     with open(LOG_FILE, "r", encoding="utf-8") as f:
         return list(csv.DictReader(f))
 
 
-def calc_avg_speed(bvid: str, current_reply: int, current_time: datetime) -> str:
-    """从最近 N 条日志起点到当前实时评论数，计算均速"""
-    records = [r for r in read_log() if r["bvid"] == bvid]
-    if not records:
-        return "数据不足"
-    baseline = records[-min(N_RECENT, len(records))]  # 防止越界
+def fetch_video(bvid: str) -> dict:
+    url = f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
     try:
-        t0 = datetime.fromisoformat(baseline["time_cst"]).replace(tzinfo=CST)
-        r0 = int(baseline["reply"])
-        dt_min = (current_time - t0).total_seconds() / 60
-        if dt_min <= 0:
-            return "时间跨度为零"
-        speed = (current_reply - r0) / dt_min
-        return f"{speed:.2f} 条/分钟（{speed * 60:.0f} 条/小时）"
-    except Exception:
-        return "计算失败"
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("code") == 0:
+                stat = data["data"]["stat"]
+                return {
+                    "bvid":      bvid,
+                    "title":     data["data"].get("title", ""),
+                    "reply":     stat.get("reply", 0),
+                    "danmaku":   stat.get("danmaku", 0),
+                    "view":      stat.get("view", 0),
+                    "like":      stat.get("like", 0),
+                    "timestamp": time.time(),
+                    "error":     None,
+                }
+            else:
+                return {"bvid": bvid, "error": data.get("message", "未知错误")}
+    except Exception as e:
+        return {"bvid": bvid, "error": str(e)}
+
+
+def fetch_videos_parallel() -> list[dict]:
+    results = [None] * len(VIDEOS)
+
+    def worker(i, bvid):
+        results[i] = fetch_video(bvid)
+
+    threads = [threading.Thread(target=worker, args=(i, bv)) for i, bv in enumerate(VIDEOS)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join(timeout=15)
+    return results
 
 
 def calc_avg_speed_json(bvid: str, current_reply: int, current_time: datetime) -> dict:
-    """返回平均速率的结构化数据，供前端展示。
-    窗口：最近 N_RECENT 条日志中最早一条 → 当前实时数据"""
     records = [r for r in read_log() if r["bvid"] == bvid]
     if not records:
         return {"bvid": bvid, "ok": False, "msg": "日志数据不足（需等待至少一个日志记录点）"}
-    baseline = records[-min(N_RECENT, len(records))]  # 防止越界
+    baseline = records[-min(N_RECENT, len(records))]
     try:
         t0 = datetime.fromisoformat(baseline["time_cst"]).replace(tzinfo=CST)
         r0 = int(baseline["reply"])
@@ -104,95 +119,70 @@ def calc_avg_speed_json(bvid: str, current_reply: int, current_time: datetime) -
 
 
 def logger_thread():
-    """后台线程：在每整 20 分钟时抓取并记录评论数"""
-    logged_key = None  # 防止同一分钟重复记录
+    logged_key = None
     while True:
-        t = now_cst()
-        key = (t.hour, t.minute)
-        if t.minute in LOG_INTERVAL_MINUTES and key != logged_key:
-            logged_key = key
-            import threading as _t
-            results = [None] * len(VIDEOS)
-
-            def _worker(i, bvid):
-                results[i] = fetch_video(bvid)
-
-            threads = [_t.Thread(target=_worker, args=(i, bv)) for i, bv in enumerate(VIDEOS)]
-            for th in threads: th.start()
-            for th in threads: th.join()
-
-            rows = []
-            for r in results:
-                if r and not r.get("error"):
-                    rows.append({
-                        "time_cst": now_cst().strftime("%Y-%m-%d %H:%M:%S"),
-                        "bvid":     r["bvid"],
-                        "title":    r.get("title", ""),
-                        "reply":    r["reply"],
-                    })
-            if rows:
-                write_log(rows)
-                ts = now_cst().strftime("%H:%M:%S")
-                print(f"\n[{ts} CST] 评论日志已记录")
-                for row in rows:
-                    cur_time = now_cst()
-                    avg = calc_avg_speed(row["bvid"], row["reply"], cur_time)
-                    print(f"  {row['bvid']}  reply={row['reply']:,}  近期均速={avg}")
-        time.sleep(30)  # 每 30 秒检查一次，避免 CPU 空转
+        try:
+            t = now_cst()
+            key = (t.hour, t.minute)
+            if t.minute in LOG_INTERVAL_MINUTES and key != logged_key:
+                logged_key = key
+                results = fetch_videos_parallel()
+                rows = []
+                for r in results:
+                    if r and not r.get("error"):
+                        rows.append({
+                            "time_cst": now_cst().strftime("%Y-%m-%d %H:%M:%S"),
+                            "bvid":     r["bvid"],
+                            "title":    r.get("title", ""),
+                            "reply":    r["reply"],
+                        })
+                if rows:
+                    write_log(rows)
+                    ts = now_cst().strftime("%H:%M:%S")
+                    print(f"\n[{ts} CST] 评论日志已记录")
+                    now = now_cst()
+                    for row in rows:
+                        avg = calc_avg_speed_json(row["bvid"], row["reply"], now)
+                        if avg.get("ok"):
+                            print(f"  {row['bvid']}  reply={row['reply']:,}  "
+                                  f"近期均速={avg['per_min']:.2f} 条/分钟（{avg['per_hour']:.0f} 条/小时）")
+                        else:
+                            print(f"  {row['bvid']}  reply={row['reply']:,}  近期均速={avg.get('msg', '未知')}")
+        except Exception as e:
+            print(f"[logger] 异常: {e}")
+        time.sleep(30)
 
 
-def fetch_video(bvid: str) -> dict:
-    """从 Bilibili API 获取单个视频统计数据"""
-    url = f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
+def _send_json(handler, data):
+    body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    handler.send_response(200)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.send_header("Content-Length", len(body))
+    handler.end_headers()
     try:
-        req = urllib.request.Request(url, headers=HEADERS)
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            if data.get("code") == 0:
-                stat = data["data"]["stat"]
-                return {
-                    "bvid":      bvid,
-                    "title":     data["data"].get("title", ""),
-                    "reply":     stat.get("reply", 0),
-                    "danmaku":   stat.get("danmaku", 0),
-                    "view":      stat.get("view", 0),
-                    "like":      stat.get("like", 0),
-                    "timestamp": time.time(),
-                    "error":     None,
-                }
-            else:
-                return {"bvid": bvid, "error": data.get("message", "未知错误")}
-    except Exception as e:
-        return {"bvid": bvid, "error": str(e)}
+        handler.wfile.write(body)
+    except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
+        pass
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        pass  # 静默日志
+        pass
 
     def do_GET(self):
         if self.path == "/api/all":
-            self._serve_all()
+            _send_json(self, fetch_videos_parallel())
         elif self.path == "/api/avg_speed":
             self._serve_avg_speed()
-        elif self.path == "/" or self.path == "/index.html":
+        elif self.path in ("/", "/index.html"):
             self._serve_file("index.html", "text/html; charset=utf-8")
         else:
             self.send_response(404)
             self.end_headers()
 
     def _serve_avg_speed(self):
-        """实时抓取当前评论数，结合最近 N 条日志计算均速"""
-        import threading as _t
-        live = [None] * len(VIDEOS)
-
-        def _w(i, bvid):
-            live[i] = fetch_video(bvid)
-
-        threads = [_t.Thread(target=_w, args=(i, bv)) for i, bv in enumerate(VIDEOS)]
-        for th in threads: th.start()
-        for th in threads: th.join()
-
+        live = fetch_videos_parallel()
         now = now_cst()
         result = []
         for item in live:
@@ -201,40 +191,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 result.append({"bvid": bvid, "ok": False, "msg": "实时数据获取失败"})
             else:
                 result.append(calc_avg_speed_json(item["bvid"], item["reply"], now))
-
-        body = json.dumps(result, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Content-Length", len(body))
-        self.end_headers()
-        try:
-            self.wfile.write(body)
-        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
-            pass
-
-    def _serve_all(self):
-        """并行获取所有视频数据"""
-        import threading
-        results = [None] * len(VIDEOS)
-
-        def worker(i, bvid):
-            results[i] = fetch_video(bvid)
-
-        threads = [threading.Thread(target=worker, args=(i, bv)) for i, bv in enumerate(VIDEOS)]
-        for t in threads: t.start()
-        for t in threads: t.join()
-
-        body = json.dumps(results, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Content-Length", len(body))
-        self.end_headers()
-        try:
-            self.wfile.write(body)
-        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
-            pass
+        _send_json(self, result)
 
     def _serve_file(self, filename, content_type):
         filepath = os.path.join(os.path.dirname(__file__), filename)
@@ -250,7 +207,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             try:
                 self.wfile.write(body)
             except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
-                pass  # 浏览器提前断开连接，忽略
+                pass
         except FileNotFoundError:
             self.send_response(404)
             self.end_headers()
@@ -258,9 +215,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     PORT = 5000
-    server = HTTPServer(("0.0.0.0", PORT), Handler)
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
 
-    # 启动日志后台线程
     t = threading.Thread(target=logger_thread, daemon=True)
     t.start()
 
@@ -273,4 +229,5 @@ if __name__ == "__main__":
     try:
         server.serve_forever()
     except KeyboardInterrupt:
+        server.shutdown()
         print("\n服务器已停止")
