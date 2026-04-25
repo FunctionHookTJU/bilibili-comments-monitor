@@ -224,7 +224,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    PORT = 5000
+    PORT = 80
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
 
     t = threading.Thread(target=logger_thread, daemon=True)
